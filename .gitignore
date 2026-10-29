@@ -25,7 +25,7 @@ venv.bak/
 *.log
 exports/
 temp_reports/
-.impeccable/review/
+.impeccable/
 .DS_Store
 .AppleDouble
 .LSOverride
