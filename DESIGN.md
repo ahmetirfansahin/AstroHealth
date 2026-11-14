@@ -43,7 +43,17 @@ visible together. Severity is conveyed in text as well as color.
 ## Dashboard regions
 
 - Mission header: AstroHealth, NASA Space Apps context, mission elapsed clock,
-  overall crew status, and an About action beside the status badge.
+  overall crew status, About, **Well-Being Check**, and a persistent
+  **I need help now** action.
+- Well-being check: the five English WHO-5 items with no preselected answers.
+  Low scores open the support dialog with a private check-in recommendation
+  above the immediate-help instructions.
+  [WHO-5](https://www.who.int/publications/m/item/who-ucn-msd-mhe-2024.01)
+- Emergency support: a keyboard-accessible dialog with immediate steps in
+  English, an explicit note about message delivery, and a close action.
+  The critical accent marks the entry point. The steps are readable offline.
+  [NASA spaceflight medical operations](https://www.nasa.gov/reference/6-0-medical-operations/)
+  · [NIMH guidance on when to get immediate help](https://www.nimh.nih.gov/health/publications/my-mental-health-do-i-need-help)
 - Crew readings: five persistent tiles for heart rate, SpO2, temperature,
   radiation, and HRV.
 - Trends: anti-aliased rolling five-minute plots for heart rate and ambient

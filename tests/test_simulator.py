@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 from PyQt6.QtCore import QCoreApplication
 from PyQt6.QtTest import QSignalSpy
 
 from core.anomaly_engine import AnomalyEngine
+from core.crew_profile import CrewProfile
 from core.simulator import TelemetrySample, TelemetrySimulator
 
 
@@ -15,6 +17,41 @@ _APP = QCoreApplication.instance() or QCoreApplication([])
 
 
 class TelemetrySimulatorTests(unittest.TestCase):
+    def test_shared_strain_changes_hrv_and_other_readings(self) -> None:
+        for age in (26, 46):
+            with self.subTest(age=age):
+                profile = CrewProfile(age)
+                simulator = TelemetrySimulator(profile=profile)
+                simulator.trigger_scenario("low_hrv")
+                strain = simulator._generate_sample()
+                self.assertGreaterEqual(strain.heart_rate, 85)
+                self.assertLess(strain.hrv, profile.hrv.low - 10)
+                self.assertTrue(profile.spo2.contains(strain.spo2))
+                simulator.trigger_hypoxia_event()
+                hypoxia = simulator._generate_sample()
+                self.assertLess(hypoxia.spo2, 92)
+                self.assertLess(hypoxia.hrv, profile.hrv.low)
+                self.assertLess(hypoxia.heart_rate, profile.max_heart_rate)
+                simulator.trigger_recovery()
+                simulator.trigger_fever_event()
+                fever = simulator._generate_sample()
+                self.assertGreater(fever.body_temperature, 38.5)
+                self.assertLess(fever.hrv, profile.hrv.low)
+
+    def test_exertion_recovery_restores_nominal_heart_rate_and_hrv(self) -> None:
+        simulator = TelemetrySimulator()
+        profile = CrewProfile()
+        with patch("core.simulator.time.monotonic", return_value=100) as clock:
+            simulator.trigger_scenario("exertion")
+            clock.return_value = 110
+            exertion = simulator._generate_sample()
+            clock.return_value = 125
+            recovered = simulator._generate_sample()
+        self.assertGreater(exertion.heart_rate, profile.heart_rate.high)
+        self.assertLess(exertion.hrv, profile.hrv.low)
+        self.assertTrue(profile.heart_rate.contains(recovered.heart_rate))
+        self.assertTrue(profile.hrv.contains(recovered.hrv))
+
     def test_spe_rises_quickly_and_decays_to_background(self) -> None:
         profile = TelemetrySimulator._spe_excess_dose_rate
         self.assertGreater(profile(0), 1.5)

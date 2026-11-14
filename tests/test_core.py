@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from core.anomaly_engine import AnomalyEngine, Severity
+from core.crew_profile import CrewProfile
 from core.database import TelemetryDatabase
 from core.simulator import TelemetrySample
 
@@ -65,7 +66,7 @@ class AnomalyEngineTests(unittest.TestCase):
         )
 
     def test_critical_heart_rate_and_warning_hrv(self) -> None:
-        findings = self.engine.evaluate(sample(heart_rate=145, hrv=35))
+        findings = self.engine.evaluate(sample(heart_rate=185, hrv=35))
         by_metric = {item.metric: item for item in findings}
         self.assertEqual(by_metric["heart_rate"].severity, Severity.CRITICAL)
         self.assertEqual(
@@ -74,11 +75,29 @@ class AnomalyEngineTests(unittest.TestCase):
         self.assertEqual(by_metric["hrv"].severity, Severity.WARNING)
 
     def test_hazard_boundaries_and_radiation_mapping(self) -> None:
-        at_boundary = sample(heart_rate=140, spo2=92, body_temperature=38.5, radiation=1.5)
+        at_boundary = sample(heart_rate=184, spo2=92, body_temperature=38.5, radiation=1.5)
         self.assertTrue(all(item.hazard is None for item in self.engine.evaluate(at_boundary)))
         radiation = self.engine.evaluate(sample(radiation=1.501))[0]
         self.assertEqual(radiation.hazard.code, "HAZARD_RADIATION_SPE")
         self.assertEqual(radiation.hazard.nasa_hrp_hazard, "Space Radiation")
+
+    def test_alerts_follow_active_crew_age(self) -> None:
+        reading = sample(heart_rate=157, hrv=50)
+        self.assertEqual(
+            [item.metric for item in self.engine.evaluate(reading, CrewProfile(35))],
+            ["hrv"],
+        )
+        self.assertEqual(
+            [item.metric for item in self.engine.evaluate(reading, CrewProfile(36))],
+            ["heart_rate"],
+        )
+        exertion = sample(heart_rate=180)
+        self.assertEqual(
+            self.engine.evaluate(exertion, CrewProfile(26))[0].severity, Severity.WARNING
+        )
+        self.assertEqual(
+            self.engine.evaluate(exertion, CrewProfile(46))[0].severity, Severity.CRITICAL
+        )
 
 
 class DatabaseTests(unittest.TestCase):

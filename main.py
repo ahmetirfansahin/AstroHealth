@@ -6,7 +6,7 @@ import sys
 import sqlite3
 from pathlib import Path
 
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QFont, QIcon
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
 from core.database import TelemetryDatabase
@@ -19,6 +19,8 @@ def main() -> int:
     app.setApplicationName("AstroHealth")
     app.setOrganizationName("AstroHealth")
     app.setFont(QFont("Segoe UI", 10))
+    app_icon = QIcon(str(Path(__file__).resolve().parent / "images" / "logo.png"))
+    app.setWindowIcon(app_icon)
 
     database_path = Path.home() / ".astrohealth" / "astrohealth.sqlite3"
     try:
@@ -33,6 +35,7 @@ def main() -> int:
         return 1
 
     window = DashboardWindow(database)
+    window.setWindowIcon(app_icon)
     window.showMaximized()
     return app.exec()
 

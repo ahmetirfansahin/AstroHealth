@@ -6,6 +6,15 @@ only (GPL-3.0-only). The complete project license is in [LICENSE](./LICENSE).
 AstroHealth uses or installs the following third-party software. Versions
 shown in the About window are read from the active Python environment.
 
+## WHO-5 questionnaire
+
+The English questionnaire items and response options in `ui/wellbeing.py`
+come from *The World Health Organization-Five Well-Being Index (WHO-5)*,
+© World Health Organization 2024, licensed under
+[CC BY-NC-SA 3.0 IGO](https://creativecommons.org/licenses/by-nc-sa/3.0/igo/).
+AstroHealth presents them in a digital form with its own instructions and
+result flow. [WHO publication](https://www.who.int/publications/m/item/who-ucn-msd-mhe-2024.01)
+
 ## PyQt6
 
 PyQt6 Python bindings for Qt, copyright Riverbank Computing Limited.

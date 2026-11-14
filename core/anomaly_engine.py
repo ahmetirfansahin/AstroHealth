@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import IntEnum
 
+from core.crew_profile import CrewProfile
 from core.mission_parameters import NASA_HRP_URL
 from core.simulator import TelemetrySample
 
@@ -70,21 +71,25 @@ class Anomaly:
 class AnomalyEngine:
     """Apply simulation thresholds and attach relevant NASA HRP hazard context."""
 
-    def evaluate(self, sample: TelemetrySample) -> tuple[Anomaly, ...]:
+    def evaluate(
+        self, sample: TelemetrySample, profile: CrewProfile | None = None
+    ) -> tuple[Anomaly, ...]:
         """Return active findings in stable metric order."""
         findings: list[Anomaly] = []
+        profile = profile or sample.crew_profile or CrewProfile()
+        max_heart_rate = profile.max_heart_rate
 
-        if sample.heart_rate < 40 or sample.heart_rate > 140:
+        if sample.heart_rate < 40 or sample.heart_rate > max_heart_rate:
             findings.append(
                 Anomaly(
                     "heart_rate",
                     Severity.CRITICAL,
                     f"CRITICAL: Heart rate outside configured limits - "
                     f"{sample.heart_rate:.0f} bpm",
-                    PHYSIOLOGICAL_STRESS if sample.heart_rate > 140 else None,
+                    PHYSIOLOGICAL_STRESS if sample.heart_rate > max_heart_rate else None,
                 )
             )
-        elif sample.heart_rate < 60 or sample.heart_rate > 100:
+        elif not profile.heart_rate.contains(sample.heart_rate):
             findings.append(
                 Anomaly(
                     "heart_rate",
@@ -104,12 +109,12 @@ class AnomalyEngine:
                     PHYSIOLOGICAL_STRESS,
                 )
             )
-        elif sample.spo2 < 95:
+        elif not profile.spo2.contains(sample.spo2):
             findings.append(
                 Anomaly(
                     "spo2",
                     Severity.WARNING,
-                    f"WARNING: Low blood oxygen - SpO2 < 95% "
+                    f"WARNING: SpO2 outside configured range "
                     f"({sample.spo2:.1f}%)",
                 )
             )
@@ -124,12 +129,12 @@ class AnomalyEngine:
                     THERMAL_REGULATION,
                 )
             )
-        elif sample.body_temperature > 37.5:
+        elif not profile.body_temperature.contains(sample.body_temperature):
             findings.append(
                 Anomaly(
                     "body_temperature",
                     Severity.WARNING,
-                    f"WARNING: Elevated body temperature - "
+                    f"WARNING: Body temperature outside configured range - "
                     f"{sample.body_temperature:.2f} C",
                 )
             )
@@ -154,7 +159,7 @@ class AnomalyEngine:
                 )
             )
 
-        if sample.hrv < 30:
+        if sample.hrv < profile.hrv.low - 10:
             findings.append(
                 Anomaly(
                     "hrv",
@@ -162,12 +167,12 @@ class AnomalyEngine:
                     f"CRITICAL: HRV below configured limit - {sample.hrv:.0f} ms",
                 )
             )
-        elif sample.hrv < 40:
+        elif not profile.hrv.contains(sample.hrv):
             findings.append(
                 Anomaly(
                     "hrv",
                     Severity.WARNING,
-                    f"WARNING: HRV below configured range - {sample.hrv:.0f} ms",
+                    f"WARNING: HRV outside configured range - {sample.hrv:.0f} ms",
                 )
             )
 

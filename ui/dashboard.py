@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import sqlite3
 import time
 from collections import deque
@@ -26,6 +27,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QSpinBox,
     QTextBrowser,
     QTextEdit,
     QVBoxLayout,
@@ -41,13 +43,21 @@ from core.anomaly_engine import (
     Severity,
 )
 from core.database import TelemetryDatabase
+from core.crew_profile import MAX_CREW_AGE, MIN_CREW_AGE, CrewProfile
 from core.mission_parameters import (
     HAZARD_PARAMETERS,
     REFERENCE_VALUES,
     RESEARCH_EXAMPLES,
     SOURCES,
 )
-from core.simulator import NOAA_SOLAR_STORMS_URL, TelemetrySample, TelemetrySimulator
+from core.simulator import SCENARIOS, NOAA_SOLAR_STORMS_URL, TelemetrySample, TelemetrySimulator
+from ui.wellbeing import WHO5_FOLLOW_UP_SCORE, WHO5_URL, WellbeingDialog
+
+_EMERGENCY_REFERENCES = (
+    ("NASA spaceflight medical operations", "https://www.nasa.gov/reference/6-0-medical-operations/"),
+    ("NASA Behavioral Health & Performance", "https://www.nasa.gov/reference/jsc-behavioral-health/"),
+    ("NIMH guidance on when to get immediate help", "https://www.nimh.nih.gov/health/publications/my-mental-health-do-i-need-help"),
+)
 
 
 COLORS = {
@@ -75,15 +85,6 @@ _METRICS = (
     ("radiation", "RADIATION", "mSv/h", "{:.3f}"),
     ("hrv", "HEART RATE VARIABILITY", "ms HRV", "{:.0f}"),
 )
-
-_METRIC_NORMALS = {
-    "heart_rate": "Configured range 60-100 bpm",
-    "spo2": "Configured range 95-99%",
-    "body_temperature": "Configured range 36.5-37.5 °C",
-    "radiation": "Configured range 0.05-0.20 mSv/h",
-    "hrv": "Configured range 40-70 ms",
-}
-
 
 class MetricCard(QFrame):
     """A compact, explicitly labeled telemetry reading."""
@@ -143,11 +144,16 @@ class DashboardWindow(QMainWindow):
         self,
         database: TelemetryDatabase,
         simulator: TelemetrySimulator | None = None,
+        *,
+        profile: CrewProfile | None = None,
     ) -> None:
         super().__init__()
         self._database = database
         self._simulator = simulator or TelemetrySimulator(parent=self)
         self._engine = AnomalyEngine()
+        self._profile = profile or CrewProfile()
+        self._simulator.set_profile(self._profile)
+        self._latest_sample: TelemetrySample | None = None
         self._active_incidents: dict[str, tuple[Anomaly, int]] = {}
         self._history: dict[str, deque[float]] = {
             metric: deque(maxlen=300) for metric, _, _, _ in _METRICS
@@ -156,6 +162,8 @@ class DashboardWindow(QMainWindow):
         self._storage_error_reported = False
         self._cards: dict[str, MetricCard] = {}
         self._curves: dict[str, pg.PlotDataItem] = {}
+        self._threshold_lines: dict[str, list[pg.InfiniteLine]] = {}
+        self._heart_plot: pg.PlotWidget
 
         self.setWindowTitle("AstroHealth")
         self.setMinimumSize(1080, 720)
@@ -166,6 +174,7 @@ class DashboardWindow(QMainWindow):
         self._simulator.sample_ready.connect(self._handle_sample)
         self._clock_timer = QTimer(self)
         self._clock_timer.timeout.connect(self._update_mission_clock)
+        self._clock_timer.timeout.connect(self._update_scenario_status)
         self._clock_timer.start(1000)
         self._simulator.start()
 
@@ -187,21 +196,29 @@ class DashboardWindow(QMainWindow):
         event.accept()
 
     def _build_ui(self) -> None:
+        dashboard = QWidget()
+        dashboard.setObjectName("dashboardPage")
+        dashboard_layout = QVBoxLayout(dashboard)
+        dashboard_layout.setContentsMargins(0, 0, 0, 0)
+        dashboard_layout.setSpacing(0)
+        header_layout = QVBoxLayout()
+        header_layout.setContentsMargins(24, 24, 24, 0)
+        header_layout.addWidget(self._build_header())
+        dashboard_layout.addLayout(header_layout)
+        self.setCentralWidget(dashboard)
+
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setObjectName("dashboardScroll")
-        self.setCentralWidget(scroll)
+        dashboard_layout.addWidget(scroll, 1)
 
         page = QWidget()
         page.setObjectName("dashboardPage")
         scroll.setWidget(page)
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setContentsMargins(24, 16, 24, 24)
         layout.setSpacing(16)
-
-        header = self._build_header()
-        layout.addWidget(header)
 
         self._storage_banner = QLabel()
         self._storage_banner.setObjectName("storageBanner")
@@ -214,10 +231,24 @@ class DashboardWindow(QMainWindow):
         )
         layout.addWidget(section_header)
 
+        profile_row = QHBoxLayout()
+        age_label = QLabel("Crew age")
+        self._crew_age = QSpinBox()
+        self._crew_age.setRange(MIN_CREW_AGE, MAX_CREW_AGE)
+        self._crew_age.setValue(self._profile.age)
+        self._crew_age.setSuffix(" years")
+        self._crew_age.setKeyboardTracking(False)
+        age_label.setBuddy(self._crew_age)
+        self._crew_age.setAccessibleName("Crew age")
+        profile_row.addWidget(age_label)
+        profile_row.addWidget(self._crew_age)
+        profile_row.addStretch()
+        layout.addLayout(profile_row)
+
         metrics = QGridLayout()
         metrics.setSpacing(8)
         for column, (key, title, unit, _) in enumerate(_METRICS):
-            card = MetricCard(title, unit, _METRIC_NORMALS[key])
+            card = MetricCard(title, unit, "")
             self._cards[key] = card
             metrics.addWidget(card, 0, column)
         layout.addLayout(metrics)
@@ -240,7 +271,8 @@ class DashboardWindow(QMainWindow):
             "Heart rate",
             "beats per minute",
             COLORS["cyan"],
-            ((100, COLORS["warning"]), (140, COLORS["critical"])),
+            ((self._profile.heart_rate.high, COLORS["warning"]),
+             (self._profile.max_heart_rate, COLORS["critical"])),
         )
         self._radiation_chart = self._create_chart(
             "Ambient radiation",
@@ -252,6 +284,8 @@ class DashboardWindow(QMainWindow):
         chart_row.addWidget(self._heart_chart, 1)
         chart_row.addWidget(self._radiation_chart, 1)
         layout.addLayout(chart_row)
+        self._update_profile_display()
+        self._crew_age.valueChanged.connect(self._change_crew_age)
 
         lower = QHBoxLayout()
         lower.setSpacing(16)
@@ -311,12 +345,96 @@ class DashboardWindow(QMainWindow):
         about_button.setMinimumHeight(40)
         about_button.clicked.connect(self._show_about)
 
+        help_button = QPushButton("I need help now")
+        help_button.setObjectName("button_critical")
+        help_button.setMinimumHeight(40)
+        help_button.clicked.connect(self._show_emergency_support)
+
+        wellbeing_button = QPushButton("Well-Being Check")
+        wellbeing_button.setMinimumHeight(40)
+        wellbeing_button.clicked.connect(self._show_wellbeing_check)
+
         row.addLayout(brand, 1)
         row.addLayout(mission, 0)
         row.addWidget(self._overall_status, 0, Qt.AlignmentFlag.AlignVCenter)
         row.addWidget(parameters_button, 0, Qt.AlignmentFlag.AlignVCenter)
         row.addWidget(about_button, 0, Qt.AlignmentFlag.AlignVCenter)
+        row.addWidget(wellbeing_button, 0, Qt.AlignmentFlag.AlignVCenter)
+        row.addWidget(help_button, 0, Qt.AlignmentFlag.AlignVCenter)
         return header
+
+    def _show_wellbeing_check(self) -> None:
+        dialog = WellbeingDialog(self)
+        dialog.setObjectName("wellbeingDialog")
+        dialog.setStyleSheet(self._stylesheet())
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        score = dialog.score()
+        if score < WHO5_FOLLOW_UP_SCORE:
+            self._show_emergency_support(wellbeing_score=score)
+            return
+        result = QMessageBox(self)
+        result.setObjectName("wellbeingResult")
+        result.setStyleSheet(self._stylesheet())
+        result.setIcon(QMessageBox.Icon.Information)
+        result.setWindowTitle("Well-Being Check result")
+        result.setText(
+            f"WHO-5 score: {score}/100. Higher scores indicate better well-being.\n\n"
+            "You can use I need help now at any time."
+        )
+        result.setStandardButtons(QMessageBox.StandardButton.Ok)
+        result.exec()
+
+    def _show_emergency_support(self, *, wellbeing_score: int | None = None) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Emergency support")
+        dialog.resize(560, 350)
+        dialog.setStyleSheet(
+            f"QDialog {{ background-color: {COLORS['background']}; }}"
+        )
+
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(16)
+
+        title = QLabel("Get help now")
+        title.setObjectName("appTitle")
+        layout.addWidget(title)
+
+        if wellbeing_score is not None:
+            result = QLabel(
+                f"WHO-5 score: {wellbeing_score}/100. Your answers suggest low well-being "
+                "over the last two weeks. Arrange a private check-in with your mission "
+                "medical team. If you need immediate help, use the steps below."
+            )
+            result.setWordWrap(True)
+            layout.addWidget(result)
+            title.setText("Well-being support")
+
+        instructions = QLabel(
+            "If you might hurt yourself, feel unable to stay safe, or have a sudden "
+            "medical concern, get help immediately.\n\n"
+            "1. Tell a nearby crewmate you need help now. Ask them to stay with you.\n\n"
+            "2. Contact the onboard medical officer immediately, or ask your "
+            "crewmate to contact them for you.\n\n"
+            "3. Follow your mission's emergency medical procedure. If ground "
+            "communication is delayed, use the onboard procedure now."
+        )
+        instructions.setWordWrap(True)
+        layout.addWidget(instructions)
+
+        status = QLabel(
+            "Simulation guidance. Opening this screen sends no alert or message. "
+            "Use your mission's designated emergency channel."
+        )
+        status.setWordWrap(True)
+        status.setObjectName("sectionDetail")
+        layout.addWidget(status)
+
+        close_buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        close_buttons.rejected.connect(dialog.reject)
+        layout.addWidget(close_buttons)
+        dialog.exec()
 
     def _show_mission_parameters(self) -> None:
         dialog = QDialog(self)
@@ -419,6 +537,10 @@ class DashboardWindow(QMainWindow):
         sip_version = escape(version("PyQt6-sip"))
         pyqtgraph_version = escape(version("pyqtgraph"))
         numpy_version = escape(version("numpy"))
+        emergency_references = "".join(
+            f'<li><a href="{url}">{escape(title)}</a></li>'
+            for title, url in _EMERGENCY_REFERENCES
+        )
         return f"""
             <html>
             <head>
@@ -445,6 +567,10 @@ class DashboardWindow(QMainWindow):
                 <li><a href="{NOAA_SOLAR_STORMS_URL}">NOAA solar radiation storms</a>
                   inform the synthetic event profile.</li>
               </ul>
+              <h3>Emergency support references</h3>
+              <ul>{emergency_references}</ul>
+              <p><a href="{WHO5_URL}">English WHO-5 Well-Being Index</a>
+                © WHO, 2024, CC BY-NC-SA 3.0 IGO. See the full notices for attribution.</p>
               <p>This project is distributed under
                 <b>GNU GPL version 3 only (GPL-3.0-only)</b>.
                 The complete license is included as <code>LICENSE</code>.</p>
@@ -547,19 +673,26 @@ class DashboardWindow(QMainWindow):
         plot.setMenuEnabled(False)
         plot.getPlotItem().setContentsMargins(8, 4, 8, 4)
 
+        if axis_name == "Heart rate":
+            self._heart_plot = plot
+            self._update_heart_chart_range(())
+
         curve = plot.plot(
             [],
             [],
             pen=pg.mkPen(color=line_color, width=2),
             antialias=True,
         )
+        lines: list[pg.InfiniteLine] = []
         for value, color in thresholds:
             threshold_line = pg.InfiniteLine(
                 pos=value,
                 angle=0,
                 pen=pg.mkPen(color=color, width=1, style=Qt.PenStyle.DashLine),
             )
-            plot.addItem(threshold_line)
+            plot.addItem(threshold_line, ignoreBounds=axis_name == "Heart rate")
+            lines.append(threshold_line)
+        self._threshold_lines[axis_name] = lines
         self._curves[axis_name] = curve
 
         layout.addWidget(heading)
@@ -606,27 +739,29 @@ class DashboardWindow(QMainWindow):
 
         heading = QLabel("Scenario controls")
         heading.setObjectName("chartTitle")
-        detail = QLabel("SYNTHETIC EVENTS · AUTO-RESET 20-30 S")
+        detail = QLabel("SYNTHETIC EVENTS · AUTO-RECOVERY")
         detail.setObjectName("sectionDetail")
 
         actions = QGridLayout()
         actions.setSpacing(8)
-        buttons = (
-            ("Trigger hypoxia", self._simulator.trigger_hypoxia_event, "critical"),
-            (
-                "Radiation spike",
-                self._simulator.trigger_radiation_spike,
-                "warning",
-            ),
-            ("Trigger fever", self._simulator.trigger_fever_event, "warning"),
-            ("Recovery", self._simulator.trigger_recovery, "neutral"),
-        )
-        for index, (text, callback, variant) in enumerate(buttons):
-            button = QPushButton(text)
-            button.setObjectName(f"button_{variant}")
+        for index, (key, scenario) in enumerate(SCENARIOS.items()):
+            button = QPushButton(scenario.label)
+            button.setObjectName("button_warning")
             button.setMinimumHeight(40)
-            button.clicked.connect(callback)
+            button.setToolTip(f"{scenario.description} Duration: {scenario.duration:g} s.")
+            button.clicked.connect(
+                lambda checked=False, scenario_key=key: self._start_scenario(scenario_key)
+            )
             actions.addWidget(button, index // 2, index % 2)
+
+        self._recovery_button = QPushButton("End active scenarios")
+        self._recovery_button.setObjectName("button_neutral")
+        self._recovery_button.setMinimumHeight(40)
+        self._recovery_button.clicked.connect(self._recover_scenarios)
+        actions.addWidget(self._recovery_button, len(SCENARIOS) // 2, len(SCENARIOS) % 2)
+        self._scenario_status = QLabel()
+        self._scenario_status.setWordWrap(True)
+        self._update_scenario_status()
 
         export_button = QPushButton("Export mission health log")
         export_button.setObjectName("button_primary")
@@ -636,9 +771,60 @@ class DashboardWindow(QMainWindow):
         layout.addWidget(heading)
         layout.addWidget(detail)
         layout.addLayout(actions)
+        layout.addWidget(self._scenario_status)
         layout.addStretch(1)
         layout.addWidget(export_button)
         parent_layout.addWidget(panel, 4)
+
+    def _start_scenario(self, key: str) -> None:
+        self._simulator.trigger_scenario(key)
+        self._update_scenario_status()
+
+    def _recover_scenarios(self) -> None:
+        self._simulator.trigger_recovery()
+        self._update_scenario_status()
+
+    def _update_scenario_status(self) -> None:
+        active = self._simulator.active_scenarios()
+        status = " · ".join(
+            f"{SCENARIOS[key].label} ({math.ceil(remaining)} s)"
+            for key, remaining in active.items()
+        )
+        self._scenario_status.setText(status or "No active scenarios")
+        self._recovery_button.setEnabled(bool(active))
+
+    def _change_crew_age(self, age: int) -> None:
+        self._profile = CrewProfile(age, self._profile.spo2, self._profile.body_temperature)
+        self._simulator.set_profile(self._profile)
+        self._update_profile_display()
+        for series in self._history.values():
+            series.clear()
+        self._update_charts()
+        if self._latest_sample is not None:
+            anomalies = self._engine.evaluate(self._latest_sample, self._profile)
+            self._display_status(self._latest_sample, anomalies)
+
+    def _update_profile_display(self) -> None:
+        profile = self._profile
+        bands = (
+            ("heart_rate", profile.heart_rate, " bpm"),
+            ("spo2", profile.spo2, "%"),
+            ("body_temperature", profile.body_temperature, " °C"),
+            ("hrv", profile.hrv, " ms"),
+        )
+        for metric, band, unit in bands:
+            self._cards[metric].range.setText(
+                f"Configured range {band.low:g}–{band.high:g}{unit}"
+            )
+        heart_card = self._cards["heart_rate"]
+        heart_card.range.setToolTip(
+            f"Simulated exertion warning above {profile.heart_rate.high:g} bpm "
+            f"and critical above {profile.max_heart_rate} bpm (220 − age)."
+        )
+        self._cards["radiation"].range.setText("Configured range 0.05–0.20 mSv/h")
+        warning_line, critical_line = self._threshold_lines["Heart rate"]
+        warning_line.setValue(profile.heart_rate.high)
+        critical_line.setValue(profile.max_heart_rate)
 
     def _handle_sample(self, payload: object) -> None:
         if not isinstance(payload, TelemetrySample):
@@ -646,13 +832,14 @@ class DashboardWindow(QMainWindow):
             return
 
         sample = payload
+        if sample.crew_profile is not None and sample.crew_profile != self._profile:
+            return
+        self._latest_sample = sample
         dose = sample.session_cumulative_radiation_msv
         dose_text = "Unavailable" if dose is None else f"{dose:.6f} mSv"
         self._cumulative_dose.setText(f"Simulated session dose · {dose_text}")
-        anomalies = self._engine.evaluate(sample)
-        overall = max(
-            (anomaly.severity for anomaly in anomalies), default=Severity.NORMAL
-        )
+        anomalies = self._engine.evaluate(sample, self._profile)
+        overall = self._display_status(sample, anomalies)
         active = {anomaly.metric: anomaly for anomaly in anomalies}
 
         for metric, (previous, incident_id) in tuple(self._active_incidents.items()):
@@ -674,7 +861,7 @@ class DashboardWindow(QMainWindow):
 
         for anomaly in anomalies:
             existing = self._active_incidents.get(anomaly.metric)
-            if existing is None or existing[0] != anomaly:
+            if existing is None:
                 try:
                     incident_id = self._database.open_incident(
                         anomaly, sample.timestamp
@@ -690,6 +877,21 @@ class DashboardWindow(QMainWindow):
                 except (OSError, sqlite3.Error) as error:
                     self._report_storage_error(error)
 
+        for key in self._history:
+            self._history[key].append(getattr(sample, key))
+        self._update_charts()
+
+        try:
+            self._database.record_sample(sample, overall)
+            self._storage_error_reported = False
+            self._storage_banner.hide()
+        except (OSError, sqlite3.Error) as error:
+            self._report_storage_error(error)
+
+    def _display_status(
+        self, sample: TelemetrySample, anomalies: tuple[Anomaly, ...]
+    ) -> Severity:
+        overall = max((item.severity for item in anomalies), default=Severity.NORMAL)
         for key, _, _, value_format in _METRICS:
             card_severity = next(
                 (
@@ -702,21 +904,13 @@ class DashboardWindow(QMainWindow):
             display_value = value_format.format(getattr(sample, key))
             description = card_severity.name
             self._cards[key].set_reading(display_value, card_severity, description)
-            self._history[key].append(getattr(sample, key))
-
-        self._update_charts()
         self._set_overall_status(overall, f"CREW STATUS · {overall.name}")
         self._incident_count.setText(f"{len(anomalies)} ACTIVE")
         self._incident_count.setStyleSheet(
             f"color: {_SEVERITY_COLORS[overall]};"
         )
 
-        try:
-            self._database.record_sample(sample, overall)
-            self._storage_error_reported = False
-            self._storage_banner.hide()
-        except (OSError, sqlite3.Error) as error:
-            self._report_storage_error(error)
+        return overall
 
     def _update_charts(self) -> None:
         for key, series in (
@@ -725,9 +919,18 @@ class DashboardWindow(QMainWindow):
         ):
             points = tuple(series)
             x_values = range(-len(points) + 1, 1)
+            if key == "heart_rate":
+                self._update_heart_chart_range(points)
             self._curves[
                 "Heart rate" if key == "heart_rate" else "Radiation exposure"
             ].setData(x_values, points)
+
+    def _update_heart_chart_range(self, points: tuple[float, ...]) -> None:
+        # Keep all supported age thresholds visible without rescaling on age changes.
+        baseline_max = CrewProfile(MIN_CREW_AGE).max_heart_rate
+        lower = min(60, min(points, default=60))
+        upper = max(baseline_max, max(points, default=baseline_max))
+        self._heart_plot.setYRange(lower, upper, padding=0.05)
 
     def _update_mission_clock(self) -> None:
         elapsed = max(0, int(time.monotonic() - self._elapsed_start))
@@ -810,6 +1013,23 @@ class DashboardWindow(QMainWindow):
             QScrollArea, QWidget#dashboardPage {{
                 background-color: {COLORS["background"]};
                 border: none;
+            }}
+            QWidget#wellbeingDialog, QWidget#wellbeingResult {{
+                background-color: {COLORS["background"]};
+            }}
+            QWidget#wellbeingDialog QComboBox {{
+                color: {COLORS["text"]};
+                background-color: {COLORS["surface"]};
+                padding: 6px 8px;
+            }}
+            QWidget#wellbeingDialog QComboBox:focus {{
+                border: 1px solid {COLORS["cyan"]};
+            }}
+            QWidget#wellbeingDialog QComboBox QAbstractItemView {{
+                color: {COLORS["text"]};
+                background-color: {COLORS["surface"]};
+                selection-color: {COLORS["background"]};
+                selection-background-color: {COLORS["cyan"]};
             }}
             QFrame#headerPanel, QFrame#metricCard, QFrame#chartPanel,
             QFrame#contentPanel {{

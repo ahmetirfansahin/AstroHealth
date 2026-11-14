@@ -32,6 +32,14 @@ The application is intended for desktop use in a deep-space mission scenario or 
 - Trigger hypoxia, radiation spike, fever, and recovery scenarios manually.
 - Classify telemetry against configured thresholds and record telemetry and anomaly incidents locally in SQLite.
 - Export the latest mission health log as structured JSON.
+- Offer the five-item English WHO-5 check offline. A score below 50 opens
+  the support screen with a recommendation for further assessment.
+  [WHO-5 scoring guidance](https://www.who.int/publications/m/item/who-ucn-msd-mhe-2024.01)
+- Provide English emergency support instructions from a persistent dashboard
+  action, available offline and independent of simulated readings. The screen
+  directs crew to their onboard medical officer and mission procedure.
+  [NASA spaceflight medical operations](https://www.nasa.gov/reference/6-0-medical-operations/)
+  · [NIMH guidance on when to get immediate help](https://www.nimh.nih.gov/health/publications/my-mental-health-do-i-need-help)
 - The displayed data is simulated; the application is a demonstration, not a medical device or a source of certified medical guidance. Thresholds require independent validation before any operational use.
 - The app must remain useful offline and communicate telemetry safely between its worker thread and desktop UI.
 
