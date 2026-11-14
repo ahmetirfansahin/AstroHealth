@@ -42,8 +42,8 @@ class AnomalyEngineTests(unittest.TestCase):
         findings = self.engine.evaluate(sample(spo2=91.0))
         hypoxia = next(item for item in findings if item.metric == "spo2")
         self.assertEqual(hypoxia.severity, Severity.CRITICAL)
-        self.assertIn("Hypoxia Detected", hypoxia.message)
         self.assertIn("SpO2 < 92%", hypoxia.message)
+        self.assertEqual(hypoxia.hazard.code, "HAZARD_PHYSIOLOGICAL_STRESS")
 
     def test_out_of_range_heart_rate_is_warning(self) -> None:
         findings = self.engine.evaluate(sample(heart_rate=55.0))
@@ -56,16 +56,29 @@ class AnomalyEngineTests(unittest.TestCase):
         )
         by_metric = {item.metric: item for item in findings}
         self.assertEqual(by_metric["radiation"].severity, Severity.WARNING)
-        self.assertIn("Solar Flare Risk", by_metric["radiation"].message)
+        self.assertIsNone(by_metric["radiation"].hazard)
         self.assertEqual(
             by_metric["body_temperature"].severity, Severity.CRITICAL
+        )
+        self.assertEqual(
+            by_metric["body_temperature"].hazard.code, "HAZARD_THERMAL_REGULATION"
         )
 
     def test_critical_heart_rate_and_warning_hrv(self) -> None:
         findings = self.engine.evaluate(sample(heart_rate=145, hrv=35))
         by_metric = {item.metric: item for item in findings}
         self.assertEqual(by_metric["heart_rate"].severity, Severity.CRITICAL)
+        self.assertEqual(
+            by_metric["heart_rate"].hazard.code, "HAZARD_PHYSIOLOGICAL_STRESS"
+        )
         self.assertEqual(by_metric["hrv"].severity, Severity.WARNING)
+
+    def test_hazard_boundaries_and_radiation_mapping(self) -> None:
+        at_boundary = sample(heart_rate=140, spo2=92, body_temperature=38.5, radiation=1.5)
+        self.assertTrue(all(item.hazard is None for item in self.engine.evaluate(at_boundary)))
+        radiation = self.engine.evaluate(sample(radiation=1.501))[0]
+        self.assertEqual(radiation.hazard.code, "HAZARD_RADIATION_SPE")
+        self.assertEqual(radiation.hazard.nasa_hrp_hazard, "Space Radiation")
 
 
 class DatabaseTests(unittest.TestCase):
@@ -90,6 +103,10 @@ class DatabaseTests(unittest.TestCase):
                 report["anomaly_incidents"][0]["severity"], "CRITICAL"
             )
             self.assertIsNotNone(report["anomaly_incidents"][0]["resolved_at"])
+            hazard = report["anomaly_incidents"][0]["hazard_context"]
+            self.assertEqual(hazard["code"], "HAZARD_PHYSIOLOGICAL_STRESS")
+            self.assertTrue(hazard["explanation"])
+            self.assertIn("https://www.nasa.gov/hrp/hazards/", hazard["references"])
 
 
 if __name__ == "__main__":

@@ -15,6 +15,15 @@ _APP = QCoreApplication.instance() or QCoreApplication([])
 
 
 class TelemetrySimulatorTests(unittest.TestCase):
+    def test_spe_rises_quickly_and_decays_to_background(self) -> None:
+        profile = TelemetrySimulator._spe_excess_dose_rate
+        self.assertGreater(profile(0), 1.5)
+        self.assertGreater(profile(2), profile(0))
+        self.assertGreater(profile(2), profile(8))
+        self.assertGreater(profile(8), profile(19))
+        self.assertGreater(profile(19), 0)
+        self.assertEqual(profile(20), 0)
+
     def test_scenarios_emit_anomalous_samples_and_recover(self) -> None:
         simulator = TelemetrySimulator(interval_seconds=0.02)
         spy = QSignalSpy(simulator.sample_ready)

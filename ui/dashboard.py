@@ -31,9 +31,23 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from core.anomaly_engine import Anomaly, AnomalyEngine, Severity
+from core.anomaly_engine import (
+    CSA_DOSIMETRY_URL,
+    NASA_HRP_URL,
+    NASA_RADIATION_URL,
+    NASA_SPACESUITS_URL,
+    Anomaly,
+    AnomalyEngine,
+    Severity,
+)
 from core.database import TelemetryDatabase
-from core.simulator import TelemetrySample, TelemetrySimulator
+from core.mission_parameters import (
+    HAZARD_PARAMETERS,
+    REFERENCE_VALUES,
+    RESEARCH_EXAMPLES,
+    SOURCES,
+)
+from core.simulator import NOAA_SOLAR_STORMS_URL, TelemetrySample, TelemetrySimulator
 
 
 COLORS = {
@@ -207,6 +221,12 @@ class DashboardWindow(QMainWindow):
             self._cards[key] = card
             metrics.addWidget(card, 0, column)
         layout.addLayout(metrics)
+        self._cumulative_dose = QLabel("Simulated session dose · Awaiting telemetry")
+        self._cumulative_dose.setObjectName("headerMeta")
+        self._cumulative_dose.setToolTip(
+            "Estimated from the simulated ambient dose rate over this session."
+        )
+        layout.addWidget(self._cumulative_dose)
 
         chart_heading = self._section_heading(
             "Physiological and environment trends", "ROLLING WINDOW · 5 MIN"
@@ -276,9 +296,17 @@ class DashboardWindow(QMainWindow):
         self._overall_status.setObjectName("overallStatus")
         self._set_overall_status(Severity.NORMAL, "AWAITING TELEMETRY")
 
+        parameters_button = QPushButton("Mission parameters")
+        parameters_button.setMinimumHeight(40)
+        parameters_button.clicked.connect(self._show_mission_parameters)
+
         about_button = QPushButton("About")
+        about_button.setToolTip(
+            "Telemetry references include NASA HRP hazards, NASA-STD-3001, "
+            "and CSA radiation monitoring. Alert thresholds are simulation settings."
+        )
         about_button.setObjectName("button_about")
-        about_button.setAccessibleName("About AstroHealth and third-party licenses")
+        about_button.setAccessibleName("About AstroHealth, telemetry references and licenses")
         about_button.setToolTip("Application information and software attributions")
         about_button.setMinimumHeight(40)
         about_button.clicked.connect(self._show_about)
@@ -286,8 +314,57 @@ class DashboardWindow(QMainWindow):
         row.addLayout(brand, 1)
         row.addLayout(mission, 0)
         row.addWidget(self._overall_status, 0, Qt.AlignmentFlag.AlignVCenter)
+        row.addWidget(parameters_button, 0, Qt.AlignmentFlag.AlignVCenter)
         row.addWidget(about_button, 0, Qt.AlignmentFlag.AlignVCenter)
         return header
+
+    def _show_mission_parameters(self) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Mission parameters")
+        dialog.resize(780, 640)
+        dialog.setStyleSheet(f"background-color: {COLORS['background']};")
+        layout = QVBoxLayout(dialog)
+
+        browser = QTextBrowser()
+        browser.setOpenExternalLinks(True)
+        browser.document().setDefaultStyleSheet(f"a {{ color: {COLORS['cyan']}; }}")
+
+        def source_link(url: str) -> str:
+            return f'<a href="{url}">{escape(SOURCES[url])}</a>'
+
+        sections = [
+            "<h2>Source reference values</h2>",
+            "<p>Mission scenarios and published context. Live readings and alert "
+            "thresholds use AstroHealth simulation settings.</p>",
+            "<ul>",
+        ]
+        for item in REFERENCE_VALUES:
+            sections.append(
+                f"<li><b>{escape(item.parameter)} · {item.value:g} {escape(item.unit)}</b>"
+                f"<br>{escape(item.context)} {source_link(item.source)}</li>"
+            )
+        sections.extend(("</ul>", "<h2>Candidate measurements by hazard</h2>",
+                         "<p>These fields describe potential inputs and outcomes. "
+                         "The live simulation measures a subset.</p>"))
+        for hazard in HAZARD_PARAMETERS:
+            references = " · ".join(source_link(url) for url in hazard.references)
+            sections.append(
+                f"<h3>{escape(hazard.hazard)}</h3>"
+                f"<p><b>Inputs</b> {escape(hazard.candidate_inputs)}"
+                f"<br><b>Outcomes</b> {escape(hazard.candidate_outcomes)}"
+                f"<br>{references}</p>"
+            )
+        sections.extend(("<h2>Research examples</h2>", "<ul>"))
+        for name, summary in RESEARCH_EXAMPLES.items():
+            sections.append(f"<li><b>{escape(name)}</b> · {escape(summary)}</li>")
+        sections.append("</ul>")
+        browser.setHtml("".join(sections))
+        layout.addWidget(browser)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        dialog.exec()
 
     def _show_about(self) -> None:
         dialog = QDialog(self)
@@ -353,6 +430,21 @@ class DashboardWindow(QMainWindow):
               </style>
             </head>
             <body style="color: {COLORS["text"]}; font-family: Segoe UI, sans-serif;">
+              <h3>Telemetry references</h3>
+              <p>Alert categories draw on NASA HRP hazards, and radiation monitoring
+                draws on NASA-STD-3001 and CSA dosimetry. Numeric thresholds and
+                radiation levels are AstroHealth simulation settings.</p>
+              <ul>
+                <li><a href="{NASA_HRP_URL}">NASA HRP human spaceflight hazards</a></li>
+                <li><a href="{NASA_RADIATION_URL}">NASA-STD-3001 V2 6164
+                  radiation exposure-rate alerts</a></li>
+                <li><a href="{NASA_SPACESUITS_URL}">NASA-STD-3001 Volume 2
+                  spacesuit monitoring and heat storage</a></li>
+                <li><a href="{CSA_DOSIMETRY_URL}">CSA astronaut dosimetry and
+                  exposure limits</a></li>
+                <li><a href="{NOAA_SOLAR_STORMS_URL}">NOAA solar radiation storms</a>
+                  inform the synthetic event profile.</li>
+              </ul>
               <p>This project is distributed under
                 <b>GNU GPL version 3 only (GPL-3.0-only)</b>.
                 The complete license is included as <code>LICENSE</code>.</p>
@@ -554,6 +646,9 @@ class DashboardWindow(QMainWindow):
             return
 
         sample = payload
+        dose = sample.session_cumulative_radiation_msv
+        dose_text = "Unavailable" if dose is None else f"{dose:.6f} mSv"
+        self._cumulative_dose.setText(f"Simulated session dose · {dose_text}")
         anomalies = self._engine.evaluate(sample)
         overall = max(
             (anomaly.severity for anomaly in anomalies), default=Severity.NORMAL
@@ -562,7 +657,11 @@ class DashboardWindow(QMainWindow):
 
         for metric, (previous, incident_id) in tuple(self._active_incidents.items()):
             current = active.get(metric)
-            if current is None or current.severity != previous.severity:
+            if (
+                current is None
+                or current.severity != previous.severity
+                or current.hazard != previous.hazard
+            ):
                 try:
                     self._database.resolve_incident(incident_id, sample.timestamp)
                     self._append_log(
@@ -584,9 +683,10 @@ class DashboardWindow(QMainWindow):
                         anomaly,
                         incident_id,
                     )
-                    self._append_log(
-                        anomaly.message, anomaly.severity, sample.timestamp
-                    )
+                    message = anomaly.message
+                    if anomaly.hazard is not None:
+                        message = f"{anomaly.hazard.code} | {message}"
+                    self._append_log(message, anomaly.severity, sample.timestamp)
                 except (OSError, sqlite3.Error) as error:
                     self._report_storage_error(error)
 

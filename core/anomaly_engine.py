@@ -5,7 +5,48 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import IntEnum
 
+from core.mission_parameters import NASA_HRP_URL
 from core.simulator import TelemetrySample
+
+
+NASA_RADIATION_URL = "https://www.nasa.gov/reference/6-0-natural-and-induced-environments-vol-2/"
+NASA_SPACESUITS_URL = "https://www.nasa.gov/reference/11-0-spacesuits-vol-2/"
+CSA_DOSIMETRY_URL = "https://www.asc-csa.gc.ca/eng/astronauts/space-medicine/radiation.asp"
+
+
+@dataclass(frozen=True, slots=True)
+class HazardContext:
+    code: str
+    nasa_hrp_hazard: str
+    explanation: str
+    references: tuple[str, ...]
+
+
+RADIATION_SPE = HazardContext(
+    "HAZARD_RADIATION_SPE",
+    "Space Radiation",
+    "Energetic solar particles can rapidly increase crew radiation exposure. "
+    "The simulation uses an ambient dose-rate trigger for a suspected SPE. "
+    "NASA-STD-3001 V2 6164 addresses exposure-rate alerting, and CSA describes "
+    "dosimetry and cumulative exposure limits.",
+    (NASA_HRP_URL, NASA_RADIATION_URL, CSA_DOSIMETRY_URL),
+)
+PHYSIOLOGICAL_STRESS = HazardContext(
+    "HAZARD_PHYSIOLOGICAL_STRESS",
+    "Gravity Fields",
+    "Low oxygen saturation or elevated heart rate can flag physiological "
+    "strain. Altered gravity affects cardiovascular adaptation, and EVA "
+    "exertion raises metabolic demand. The readings alone cannot establish cause.",
+    (NASA_HRP_URL, NASA_SPACESUITS_URL),
+)
+THERMAL_REGULATION = HazardContext(
+    "HAZARD_THERMAL_REGULATION",
+    "Hostile/Closed Environments",
+    "Elevated body temperature can flag heat strain. During EVA, metabolic "
+    "heat can accumulate if heat removal is insufficient. NASA-STD-3001 "
+    "V2 11011 addresses suited crewmember heat storage.",
+    (NASA_HRP_URL, NASA_SPACESUITS_URL),
+)
 
 
 class Severity(IntEnum):
@@ -23,10 +64,11 @@ class Anomaly:
     metric: str
     severity: Severity
     message: str
+    hazard: HazardContext | None = None
 
 
 class AnomalyEngine:
-    """Classify samples using explicit demo thresholds, not medical guidance."""
+    """Apply simulation thresholds and attach relevant NASA HRP hazard context."""
 
     def evaluate(self, sample: TelemetrySample) -> tuple[Anomaly, ...]:
         """Return active findings in stable metric order."""
@@ -39,6 +81,7 @@ class AnomalyEngine:
                     Severity.CRITICAL,
                     f"CRITICAL: Heart rate outside configured limits - "
                     f"{sample.heart_rate:.0f} bpm",
+                    PHYSIOLOGICAL_STRESS if sample.heart_rate > 140 else None,
                 )
             )
         elif sample.heart_rate < 60 or sample.heart_rate > 100:
@@ -56,8 +99,9 @@ class AnomalyEngine:
                 Anomaly(
                     "spo2",
                     Severity.CRITICAL,
-                    f"CRITICAL: Hypoxia Detected - SpO2 < 92% "
+                    f"CRITICAL: Low oxygen saturation - SpO2 < 92% "
                     f"({sample.spo2:.1f}%)",
+                    PHYSIOLOGICAL_STRESS,
                 )
             )
         elif sample.spo2 < 95:
@@ -75,8 +119,9 @@ class AnomalyEngine:
                 Anomaly(
                     "body_temperature",
                     Severity.CRITICAL,
-                    f"CRITICAL: Fever / Hyperthermia - temperature > 38.5 C "
+                    f"CRITICAL: Elevated body temperature > 38.5 C "
                     f"({sample.body_temperature:.2f} C)",
+                    THERMAL_REGULATION,
                 )
             )
         elif sample.body_temperature > 37.5:
@@ -94,8 +139,9 @@ class AnomalyEngine:
                 Anomaly(
                     "radiation",
                     Severity.CRITICAL,
-                    f"CRITICAL: Solar Particle Event radiation peak - "
+                    f"CRITICAL: Elevated dose rate, suspected solar particle event - "
                     f"{sample.radiation:.2f} mSv/h",
+                    RADIATION_SPE,
                 )
             )
         elif sample.radiation > 0.20:
@@ -103,7 +149,7 @@ class AnomalyEngine:
                 Anomaly(
                     "radiation",
                     Severity.WARNING,
-                    f"WARNING: Radiation Peak - Solar Flare Risk "
+                    f"WARNING: Dose rate above simulated background "
                     f"({sample.radiation:.2f} mSv/h)",
                 )
             )

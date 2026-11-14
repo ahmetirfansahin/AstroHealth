@@ -5,11 +5,13 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from core.anomaly_engine import Anomaly, Severity
+from core.mission_parameters import HAZARD_PARAMETERS, REFERENCE_VALUES, RESEARCH_EXAMPLES, SOURCES
 from core.simulator import TelemetrySample
 
 
@@ -43,8 +45,9 @@ class TelemetryDatabase:
                 """
                 INSERT INTO telemetry_logs (
                     timestamp, heart_rate, spo2, body_temperature,
-                    radiation, hrv, overall_status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    radiation, hrv, overall_status,
+                    session_cumulative_radiation_msv, simulation_session_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     sample.timestamp.isoformat(),
@@ -54,23 +57,29 @@ class TelemetryDatabase:
                     sample.radiation,
                     sample.hrv,
                     overall_status.name,
+                    sample.session_cumulative_radiation_msv,
+                    sample.simulation_session_id,
                 ),
             )
 
     def open_incident(self, anomaly: Anomaly, timestamp: datetime) -> int:
         """Record a newly active anomaly and return its row identifier."""
+        hazard_context = (
+            json.dumps(asdict(anomaly.hazard)) if anomaly.hazard is not None else None
+        )
         with self._lock, self._connection:
             cursor = self._connection.execute(
                 """
                 INSERT INTO anomaly_incidents (
-                    opened_at, resolved_at, severity, metric, message
-                ) VALUES (?, NULL, ?, ?, ?)
+                    opened_at, resolved_at, severity, metric, message, hazard_context
+                ) VALUES (?, NULL, ?, ?, ?, ?)
                 """,
                 (
                     timestamp.isoformat(),
                     anomaly.severity.name,
                     anomaly.metric,
                     anomaly.message,
+                    hazard_context,
                 ),
             )
             return int(cursor.lastrowid)
@@ -98,12 +107,24 @@ class TelemetryDatabase:
             incidents = self._connection.execute(
                 "SELECT * FROM anomaly_incidents ORDER BY id"
             ).fetchall()
-            payload: dict[str, Any] = {
-                "exported_at": datetime.now().astimezone().isoformat(),
-                "database": str(self.path),
-                "telemetry_logs": [dict(row) for row in telemetry],
-                "anomaly_incidents": [dict(row) for row in incidents],
-            }
+        incident_records = [dict(row) for row in incidents]
+        for incident in incident_records:
+            hazard_context = incident["hazard_context"]
+            if hazard_context is not None:
+                incident["hazard_context"] = json.loads(hazard_context)
+        payload: dict[str, Any] = {
+            "exported_at": datetime.now().astimezone().isoformat(),
+            "database": str(self.path),
+            "telemetry_logs": [dict(row) for row in telemetry],
+            "anomaly_incidents": incident_records,
+            "mission_parameters": {
+                "sources": SOURCES,
+                "reference_values": [asdict(value) for value in REFERENCE_VALUES],
+                "hazards": [asdict(hazard) for hazard in HAZARD_PARAMETERS],
+                "research_examples": RESEARCH_EXAMPLES,
+                "telemetry_origin": "synthetic",
+            },
+        }
         with export_path.open("w", encoding="utf-8", newline="\n") as report:
             json.dump(payload, report, indent=2, ensure_ascii=False)
             report.write("\n")
@@ -121,7 +142,9 @@ class TelemetryDatabase:
                 radiation REAL NOT NULL,
                 hrv REAL NOT NULL,
                 overall_status TEXT NOT NULL
-                    CHECK (overall_status IN ('NORMAL', 'WARNING', 'CRITICAL'))
+                    CHECK (overall_status IN ('NORMAL', 'WARNING', 'CRITICAL')),
+                session_cumulative_radiation_msv REAL,
+                simulation_session_id TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_telemetry_logs_timestamp
                 ON telemetry_logs(timestamp);
@@ -133,9 +156,29 @@ class TelemetryDatabase:
                 severity TEXT NOT NULL
                     CHECK (severity IN ('WARNING', 'CRITICAL')),
                 metric TEXT NOT NULL,
-                message TEXT NOT NULL
+                message TEXT NOT NULL,
+                hazard_context TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_anomaly_incidents_opened_at
                 ON anomaly_incidents(opened_at);
             """
         )
+        with self._connection:
+            self._connection.execute("BEGIN IMMEDIATE")
+            columns = self._connection.execute("PRAGMA table_info(anomaly_incidents)")
+            if "hazard_context" not in {column["name"] for column in columns}:
+                self._connection.execute(
+                    "ALTER TABLE anomaly_incidents ADD COLUMN hazard_context TEXT"
+                )
+            telemetry_columns = {
+                column["name"]
+                for column in self._connection.execute("PRAGMA table_info(telemetry_logs)")
+            }
+            if "session_cumulative_radiation_msv" not in telemetry_columns:
+                self._connection.execute(
+                    "ALTER TABLE telemetry_logs ADD COLUMN session_cumulative_radiation_msv REAL"
+                )
+            if "simulation_session_id" not in telemetry_columns:
+                self._connection.execute(
+                    "ALTER TABLE telemetry_logs ADD COLUMN simulation_session_id TEXT"
+                )
