@@ -357,10 +357,10 @@ class DashboardWindow(QMainWindow):
         row.addLayout(brand, 1)
         row.addLayout(mission, 0)
         row.addWidget(self._overall_status, 0, Qt.AlignmentFlag.AlignVCenter)
-        row.addWidget(parameters_button, 0, Qt.AlignmentFlag.AlignVCenter)
-        row.addWidget(about_button, 0, Qt.AlignmentFlag.AlignVCenter)
         row.addWidget(wellbeing_button, 0, Qt.AlignmentFlag.AlignVCenter)
         row.addWidget(help_button, 0, Qt.AlignmentFlag.AlignVCenter)
+        row.addWidget(parameters_button, 0, Qt.AlignmentFlag.AlignVCenter)
+        row.addWidget(about_button, 0, Qt.AlignmentFlag.AlignVCenter)
         return header
 
     def _show_wellbeing_check(self) -> None:
