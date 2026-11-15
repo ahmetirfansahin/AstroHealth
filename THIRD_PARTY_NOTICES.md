@@ -117,8 +117,34 @@ components; consult the license directory in the exact NumPy distribution
 being installed or redistributed. NumPy license information:
 <https://numpy.org/doc/stable/license.html>.
 
-## NASA Space Apps Challenge
+## NASA reference materials
 
-AstroHealth is being developed for the NASA Space Apps Challenge. The current
-telemetry stream is synthetic. NASA datasets and any associated citations or
-usage notices will be documented here when those datasets are integrated.
+AstroHealth cites the following NASA web resources for mission-health,
+spaceflight-environment, radiation, spacesuit, and crew-support context:
+
+- [NASA Human Research Program: Hazards of Human Spaceflight](https://www.nasa.gov/hrp/hazards/)
+- [NASA-STD-3001 Volume 2: Natural and Induced Environments](https://www.nasa.gov/reference/6-0-natural-and-induced-environments-vol-2/)
+- [NASA-STD-3001 Volume 2: Spacesuits](https://www.nasa.gov/reference/11-0-spacesuits-vol-2/)
+- [NASA spaceflight medical operations](https://www.nasa.gov/reference/6-0-medical-operations/)
+- [NASA Behavioral Health & Performance](https://www.nasa.gov/reference/jsc-behavioral-health/)
+
+## Canadian Space Agency reference materials
+
+AstroHealth also cites the Canadian Space Agency's guidance on astronaut
+radiation dosimetry:
+
+- [CSA astronaut dosimetry and radiation exposure](https://www.asc-csa.gc.ca/eng/astronauts/space-medicine/radiation.asp)
+
+This page is reference material only. AstroHealth does not redistribute CSA
+software or datasets and does not imply CSA endorsement, validation,
+certification, or affiliation.
+
+These pages are reference materials only; AstroHealth does not redistribute
+NASA software or NASA datasets. All telemetry in the application is
+synthetically generated, and the project does not imply NASA endorsement,
+validation, certification, or affiliation. The application's thresholds and
+health guidance are demonstration content and must not be used as operational
+or medical advice.
+
+AstroHealth is being developed for the NASA Space Apps Challenge. The NASA
+name and marks remain the property of NASA.
