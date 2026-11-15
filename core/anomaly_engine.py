@@ -79,7 +79,7 @@ class AnomalyEngine:
         profile = profile or sample.crew_profile or CrewProfile()
         max_heart_rate = profile.max_heart_rate
 
-        if sample.heart_rate < 40 or sample.heart_rate > max_heart_rate:
+        if sample.heart_rate < 40 or sample.heart_rate >= max_heart_rate:
             findings.append(
                 Anomaly(
                     "heart_rate",

@@ -601,9 +601,9 @@ class DashboardWindow(QMainWindow):
               <h3>Project scope</h3>
               <p>AstroHealth is being developed for the NASA Space Apps
                 Challenge. The current telemetry stream is synthetic. NASA
-                datasets and their source attributions will be documented
-                when those datasets are integrated. This application does not
-                provide validated medical guidance.</p>
+                and CSA links are reference materials only; this application
+                does not provide validated medical guidance or imply agency
+                endorsement, validation, certification, or affiliation.</p>
             </body>
             </html>
         """

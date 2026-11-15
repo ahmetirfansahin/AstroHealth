@@ -139,7 +139,20 @@ This page is reference material only. AstroHealth does not redistribute CSA
 software or datasets and does not imply CSA endorsement, validation,
 certification, or affiliation.
 
-These pages are reference materials only; AstroHealth does not redistribute
+## Other reference materials
+
+The application also links to the following non-NASA sources:
+
+- [NOAA solar radiation storms](https://www.spaceweather.gov/phenomena/solar-radiation-storm)
+- [NIMH guidance on when to get immediate help](https://www.nimh.nih.gov/health/publications/my-mental-health-do-i-need-help)
+- [Exercise and HRV recovery](https://pubmed.ncbi.nlm.nih.gov/26781711/)
+- [Hypoxic exposure and HRV](https://pubmed.ncbi.nlm.nih.gov/27030629/)
+- [Heat stress and HRV](https://pubmed.ncbi.nlm.nih.gov/24390688/)
+
+These links provide contextual references only. AstroHealth does not
+redistribute their software or content.
+
+The NASA pages are reference materials only; AstroHealth does not redistribute
 NASA software or NASA datasets. All telemetry in the application is
 synthetically generated, and the project does not imply NASA endorsement,
 validation, certification, or affiliation. The application's thresholds and
