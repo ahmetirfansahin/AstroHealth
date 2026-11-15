@@ -8,8 +8,13 @@ that crosses configured thresholds.
 ## Run
 
 Python 3.10 or later is required.
-
+First clone the repo.
 ```powershell
+git clone https://github.com/ahmetirfansahin/AstroHealth.git
+```
+Then run the program.
+```powershell
+cd AstroHealth
 python -m pip install -r requirements.txt
 python main.py
 ```
