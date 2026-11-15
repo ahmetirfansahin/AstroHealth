@@ -60,8 +60,13 @@ visible together. Severity is conveyed in text as well as color.
   radiation, with configured reference lines.
 - Incident record: chronological, timestamped warnings, critical alerts, and
   resolutions.
-- Simulation controls: clearly labeled hypoxia, radiation, fever, recovery,
-  and JSON export actions.
+- Simulation controls: a crew-age selector (26–46 years), clearly labeled
+  synthetic scenarios for Hypoxia (30 s), Solar particle event (20 s), Fever
+  (30 s), EVA exertion (25 s), Bradycardia (20 s), Cold exposure (25 s), and
+  Autonomic strain (25 s), plus **End active scenarios** and
+  **Export mission health log** actions. Scenarios in the same group replace
+  one another; independent groups can run together, and each scenario expires
+  automatically.
 - About: project-license summary, live dependency versions, third-party
   attributions, and a link to the full local notices.
 
